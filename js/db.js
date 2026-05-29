@@ -8,6 +8,14 @@
  */
 
 // ==========================================
+// BAGIAN KEAMANAN: FALLBACK AUTO-RESOLVE VARIABEL CLOUD URL
+// ==========================================
+// Memastikan variabel googleSheetsURL selalu terdefinisi tanpa melempar ReferenceError
+if (typeof googleSheetsURL === 'undefined') {
+    var googleSheetsURL = localStorage.getItem('he_sheets_url') || '';
+}
+
+// ==========================================
 // BAGIAN 1: API SINKRONISASI GOOGLE SHEETS & DRIVE
 // ==========================================
 
@@ -18,6 +26,11 @@
  * @param {string} actionType - Tipe aksi ('add', 'edit', atau 'delete')
  */
 async function syncDataWithSheets(isSilent = false, submittedJob = null, actionType = 'add') {
+    // Memastikan kembali URL cloud terbaru ter-update dari penyimpanan lokal browser
+    if (typeof googleSheetsURL === 'undefined' || !googleSheetsURL) {
+        googleSheetsURL = localStorage.getItem('he_sheets_url') || '';
+    }
+
     if (!googleSheetsURL) {
         if (!isSilent) showAlert('Tautan Google Sheets belum ditentukan!', 'error');
         return;
@@ -146,6 +159,9 @@ async function syncDataWithSheets(isSilent = false, submittedJob = null, actionT
  * Menarik otomatis database terbaru dari awan sesaat setelah login sukses secara senyap
  */
 async function pullDataFromSheetsSilently() {
+    if (typeof googleSheetsURL === 'undefined' || !googleSheetsURL) {
+        googleSheetsURL = localStorage.getItem('he_sheets_url') || '';
+    }
     if (!googleSheetsURL) return;
     try {
         const response = await fetch(googleSheetsURL + "?action=read");
