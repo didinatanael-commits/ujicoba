@@ -325,7 +325,8 @@ window.onload = function() {
     const viewParam = urlParams.get('view');
     
     if (apiParam && apiParam.startsWith('https://script.google.com/')) {
-        googleSheetsURL = apiParam.trim();
+        // Mengamankan rujukan penulisan variabel ke window scope global
+        window.googleSheetsURL = apiParam.trim();
         localStorage.setItem('he_sheets_url', apiParam.trim());
         window.history.replaceState({}, document.title, window.location.pathname);
         showAlert('Cloud database terhubung otomatis!', 'success');
@@ -335,12 +336,19 @@ window.onload = function() {
         sessionStorage.setItem('pending_view_id', viewParam);
     }
 
+    const currentSavedURL = localStorage.getItem('he_sheets_url') || '';
+
     // Periksa and muat konfigurasi API Spreadsheet
-    if (googleSheetsURL) {
+    if (currentSavedURL) {
+        window.googleSheetsURL = currentSavedURL;
         const sheetApiUrlInput = document.getElementById('sheet-api-url');
-        if (sheetApiUrlInput) sheetApiUrlInput.value = googleSheetsURL;
+        if (sheetApiUrlInput) sheetApiUrlInput.value = currentSavedURL;
         updateSyncStatusUI(true);
-        pullDataFromSheetsSilently(); // Ambil database awan terbaru secara senyap
+        
+        // Melakukan penahanan ReferenceError (Safe-fall check)
+        if (typeof pullDataFromSheetsSilently === 'function') {
+            pullDataFromSheetsSilently(); // Ambil database awan terbaru secara senyap
+        }
     } else {
         updateSyncStatusUI(false);
     }
