@@ -1,270 +1,361 @@
 /**
  * =========================================================================
- * FILE: js/db.js
- * FUNGSINYA: Berkas modul pertukaran data API harian antara local storage HP
- * dengan Google Sheets & Folder Penyimpanan foto di Google Drive (via Apps Script).
- * Mengatur penambahan data baru harian, edit pending, hapus data, dan render data.
+ * FILE: js/app.js
+ * FUNGSINYA: Berkas pengikat and controller utama aplikasi.
+ * Menyambungkan seluruh komponen modul terpisah, menangani filter saringan data,
+ * manajemen dropdown dinamis, and inisialisasi awal window.onload.
  * =========================================================================
  */
 
 // ==========================================
-// BAGIAN KEAMANAN: FALLBACK AUTO-RESOLVE VARIABEL CLOUD URL
-// ==========================================
-// Memastikan variabel googleSheetsURL selalu terdefinisi tanpa melempar ReferenceError
-if (typeof googleSheetsURL === 'undefined') {
-    var googleSheetsURL = localStorage.getItem('he_sheets_url') || '';
-}
-
-// ==========================================
-// BAGIAN 1: API SINKRONISASI GOOGLE SHEETS & DRIVE
+// BAGIAN KEAMANAN: DEFINISI HOISTED-SAFE UNTUK FUNGSI VISUAL INDIKATOR
 // ==========================================
 
 /**
- * Mengunggah data logbook lokal dan data user ke Google Sheets Cloud database
- * @param {boolean} isSilent - Menentukan apakah notifikasi toast dimunculkan atau tidak
- * @param {object} submittedJob - Data pekerjaan yang baru saja disimpan (opsional)
- * @param {string} actionType - Tipe aksi ('add', 'edit', atau 'delete')
+ * Fungsi memperbarui visual indikator Cloud vs Local secara aman (hoisted-safe)
+ * @param {boolean} isS - Menyatakan apakah mode cloud aktif (true) atau lokal (false)
  */
-async function syncDataWithSheets(isSilent = false, submittedJob = null, actionType = 'add') {
-    // Memastikan kembali URL cloud terbaru ter-update dari penyimpanan lokal browser
-    if (typeof googleSheetsURL === 'undefined' || !googleSheetsURL) {
-        googleSheetsURL = localStorage.getItem('he_sheets_url') || '';
+function updateSyncStatusUI(isS) {
+    const statusText = document.getElementById('stat-sync');
+    if (statusText) {
+        statusText.innerText = isS ? "Cloud" : "Local";
+        statusText.className = isS 
+            ? "text-2xs font-extrabold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100" 
+            : "text-2xs font-extrabold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full border border-slate-200";
+    }
+    const bannerStatus = document.getElementById('banner-status-text');
+    if (bannerStatus) {
+        bannerStatus.innerText = isS 
+            ? "Aplikasi Anda berhasil tersinkronisasi ke Google Spreadsheet." 
+            : "Aplikasi berjalan mode Offline (Local). Masukkan URL Apps Script untuk sinkronisasi.";
+    }
+    const syncBanner = document.getElementById('sync-banner');
+    if (syncBanner) {
+        if (isS) {
+            syncBanner.classList.add('hidden');
+        } else if (currentUserName === null) {
+            syncBanner.classList.remove('hidden');
+        } else {
+            syncBanner.classList.add('hidden');
+        }
+    }
+}
+
+// ==========================================
+// BAGIAN 1: MANAJEMEN DROPDOWN & INPUT KATEGORI
+// ==========================================
+
+/**
+ * Mengisi pilihan bidang kepakaran & jenis pemeliharaan pada form input utama
+ */
+function populateFormDropdowns() {
+    const specialtySelect = document.getElementById('job-specialty');
+    const maintenanceSelect = document.getElementById('job-maintenance-type');
+    if (!specialtySelect || !maintenanceSelect) return;
+
+    specialtySelect.innerHTML = `<option value="" disabled selected>Pilih Bidang...</option>`;
+    specialtiesData.forEach(item => { 
+        specialtySelect.innerHTML += `<option value="${item}">${item}</option>`; 
+    });
+
+    maintenanceSelect.innerHTML = `<option value="" disabled selected>Pilih Jenis...</option>`;
+    maintenanceTypesData.forEach(item => { 
+        maintenanceSelect.innerHTML += `<option value="${item}">${item}</option>`; 
+    });
+}
+
+/**
+ * Mengisi pilihan bidang kepakaran & jenis pemeliharaan pada form modal edit popup
+ */
+function populateModalDropdowns() {
+    const specialtySelect = document.getElementById('modal-job-specialty');
+    const maintenanceSelect = document.getElementById('modal-job-maintenance-type');
+    if (!specialtySelect || !maintenanceSelect) return;
+
+    specialtySelect.innerHTML = `<option value="" disabled selected>Pilih Bidang...</option>`;
+    specialtiesData.forEach(item => { 
+        specialtySelect.innerHTML += `<option value="${item}">${item}</option>`; 
+    });
+
+    maintenanceSelect.innerHTML = `<option value="" disabled selected>Pilih Jenis...</option>`;
+    maintenanceTypesData.forEach(item => { 
+        maintenanceSelect.innerHTML += `<option value="${item}">${item}</option>`; 
+    });
+}
+
+/**
+ * Mengatur seleksi tombol kategori area pada formulir input utama
+ * @param {string} cat - Nama kategori area ('Guest Room', 'Meeting Room', dll)
+ */
+function selectCategory(cat) {
+    activeCategory = cat;
+    document.getElementById('job-category').value = cat;
+    ['cat-room', 'cat-meeting', 'cat-public', 'cat-event', 'cat-kitchen'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.className = "py-2.5 px-2 rounded-xl border text-[10px] font-bold text-center border-slate-200 text-slate-600 bg-white";
+    });
+    
+    let targetId = cat === 'Guest Room' ? 'cat-room' : 
+                   cat === 'Meeting Room' ? 'cat-meeting' : 
+                   cat === 'Public Area' ? 'cat-public' :
+                   cat === 'Event' ? 'cat-event' : 'cat-kitchen';
+    const targetEl = document.getElementById(targetId);
+    if (targetEl) {
+        if (cat === 'Kitchen') {
+            targetEl.className = "py-2.5 px-2 rounded-xl border text-[10px] font-bold text-center bg-indigo-50 border-indigo-500 text-indigo-700 ring-2 ring-indigo-500/15 col-span-2";
+        } else {
+            targetEl.className = "py-2.5 px-2 rounded-xl border text-[10px] font-bold text-center bg-indigo-50 border-indigo-500 text-indigo-700 ring-2 ring-indigo-500/15";
+        }
+    }
+}
+
+/**
+ * Mengatur seleksi tombol kategori area pada modal edit popup
+ * @param {string} cat - Nama kategori area ('Guest Room', 'Meeting Room', dll)
+ */
+function selectModalCategory(cat) {
+    activeModalCategory = cat;
+    document.getElementById('modal-job-category').value = cat;
+    ['modal-cat-room', 'modal-cat-meeting', 'modal-cat-public', 'modal-cat-event', 'modal-cat-kitchen'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.className = "py-2.5 px-2 rounded-xl border text-[10px] font-bold text-center border-slate-200 text-slate-600 bg-white";
+    });
+    
+    let targetId = cat === 'Guest Room' ? 'modal-cat-room' : 
+                   cat === 'Meeting Room' ? 'modal-cat-meeting' : 
+                   cat === 'Public Area' ? 'modal-cat-public' :
+                   cat === 'Event' ? 'modal-cat-event' : 'modal-cat-kitchen';
+    const targetEl = document.getElementById(targetId);
+    if (targetEl) {
+        if (cat === 'Kitchen') {
+            targetEl.className = "py-2.5 px-2 rounded-xl border text-[10px] font-bold text-center bg-indigo-50 border-indigo-500 text-indigo-700 ring-2 ring-indigo-500/15 col-span-2";
+        } else {
+            targetEl.className = "py-2.5 px-2 rounded-xl border text-[10px] font-bold text-center bg-indigo-50 border-indigo-500 text-indigo-700 ring-2 ring-indigo-500/15";
+        }
+    }
+}
+
+function selectCategoryInModal(cat) {
+    selectModalCategory(cat);
+}
+
+
+// ==========================================
+// BAGIAN 2: PENYARINGAN DATA (APPLY FILTERS & EXPORT)
+// ==========================================
+
+/**
+ * Memproses filter saringan pencarian data logbook (Search text, Tanggal Maks 30 Hari, Kategori, Status)
+ * @param {boolean} triggerByDateButton - Menandakan apakah filter dipicu paksa oleh tombol pencari tanggal
+ */
+function applyFilters(triggerByDateButton = false) {
+    const searchVal = document.getElementById('filter-search').value.toLowerCase().trim();
+    const startDateVal = document.getElementById('filter-start-date').value; 
+    const endDateVal = document.getElementById('filter-end-date').value; 
+    const catVal = document.getElementById('filter-category').value;
+    const statusVal = document.getElementById('filter-status').value;
+
+    let isUsingCustomRange = false;
+    let startLimitStr = ""; 
+    let endLimitStr = "";
+    const isUsingNonDateSearch = searchVal || catVal || statusVal;
+
+    // Deteksi filter tanggal kustom
+    if (startDateVal || endDateVal) {
+        isUsingCustomRange = true;
+        if (!triggerByDateButton) return; // Tunggu sampai tombol "Search" ditekan jika menggunakan kustom tanggal
+    } else if (!isUsingNonDateSearch) {
+        // Jika tidak mencari apa-apa, batasi otomatis ke Hari Ini saja (1 hari berjalan)
+        const today = new Date();
+        const formatDateHelper = (dateObj) => {
+            const y = dateObj.getFullYear();
+            const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+            const d = String(dateObj.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        };
+        startLimitStr = formatDateHelper(today);
+        endLimitStr = formatDateHelper(today);
     }
 
-    if (!googleSheetsURL) {
-        if (!isSilent) showAlert('Tautan Google Sheets belum ditentukan!', 'error');
+    const filtered = logbookData.filter(item => {
+        if (!item) return false;
+        
+        const matchesSearch = !searchVal || 
+            (item.area && item.area.toLowerCase().includes(searchVal)) ||
+            (item.teknisi && item.teknisi.toLowerCase().includes(searchVal)) ||
+            (item.detail && item.detail.toLowerCase().includes(searchVal));
+            
+        let matchesDate = true;
+        if (item.tanggal) {
+            const itemDateOnly = item.tanggal.split('T')[0].split(' ')[0];
+            if (isUsingCustomRange) {
+                matchesDate = itemDateOnly >= startDateVal && itemDateOnly <= endDateVal;
+            } else if (!isUsingNonDateSearch) {
+                matchesDate = itemDateOnly >= startLimitStr && itemDateOnly <= endLimitStr;
+            }
+        }
+        
+        const matchesCat = !catVal || item.category === catVal;
+        const matchesStatus = !statusVal || item.status === statusVal;
+
+        return matchesSearch && matchesDate && matchesCat && matchesStatus;
+    });
+
+    // Jika filter kustom aktif atau mengetik pencarian, tampilkan dalam Pop-up paginasi 10 baris
+    if (isUsingNonDateSearch || (isUsingCustomRange && triggerByDateButton)) {
+        openPaginatedSearchModal(filtered);
+    } else {
+        renderData(filtered);
+    }
+}
+
+/**
+ * Menghapus seluruh filter pencarian dan mengembalikan ke setelan default hari ini
+ */
+function clearFilters() {
+    document.getElementById('filter-search').value = '';
+    document.getElementById('filter-start-date').value = '';
+    document.getElementById('filter-end-date').value = '';
+    document.getElementById('filter-category').value = '';
+    document.getElementById('filter-status').value = '';
+    applyFilters();
+}
+
+/**
+ * Mengekspor seluruh database pekerjaan yang tersimpan ke format CSV (Excel compatible)
+ */
+function exportToExcel() {
+    if (logbookData.length === 0) {
+        showAlert('Tidak ada data logbook untuk diekspor!', 'error');
         return;
     }
-
-    const btnSubmit = document.getElementById('btn-submit');
-    const btnModalSubmit = document.getElementById('btn-modal-submit');
-    let originalBtnHtml = "";
-    let originalBtnModalHtml = "";
-
-    // Beri efek loading pada tombol submit jika ada
-    if (btnSubmit) {
-        originalBtnHtml = btnSubmit.innerHTML;
-        btnSubmit.disabled = true;
-        btnSubmit.innerHTML = `
-            <svg class="animate-spin h-4 w-4 text-white inline-block mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <span>Syncing...</span>
-        `;
-    }
-
-    if (btnModalSubmit) {
-        originalBtnModalHtml = btnModalSubmit.innerHTML;
-        btnModalSubmit.disabled = true;
-        btnModalSubmit.innerHTML = `<span>Saving...</span>`;
-    }
-
-    if (!isSilent) {
-        showAlert('Menghubungkan ke Google Sheets...', 'info');
-        const diagBox = document.getElementById('diagnostics-box');
-        if (diagBox) diagBox.classList.add('hidden');
-        const debugBox = document.getElementById('alert-debug');
-        if (debugBox) debugBox.classList.add('hidden');
-    }
-
-    try {
-        const response = await fetch(googleSheetsURL, {
-            method: 'POST',
-            mode: 'cors',
-            redirect: 'follow',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({
-                action: 'syncFull',
-                logbook: logbookData,
-                users: usersData
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error("Connection failed with status: " + response.status);
-        }
-
-        const res = await response.json();
-        if (res.status === 'success') {
-            if (res.logbook) {
-                // Perbarui database luring dengan versi terbaru dari Google Sheets cloud
-                logbookData = res.logbook.map(item => {
-                    if (typeof item.photos === 'string') {
-                        try { item.photos = JSON.parse(item.photos); } catch(e) { item.photos = []; }
-                    }
-                    if (!Array.isArray(item.photos)) {
-                        item.photos = [];
-                    }
-                    return item;
-                });
-                localStorage.setItem('he_logbook_local', JSON.stringify(logbookData));
-            }
-
-            if (res.users && res.users.length > 0) {
-                let incomingUsers = res.users;
-                let mergedUsers = [...usersData];
-                incomingUsers.forEach(cloudUser => {
-                    const index = mergedUsers.findIndex(localUser => localUser.username === cloudUser.username);
-                    if (index !== -1) {
-                        mergedUsers[index] = cloudUser;
-                    } else {
-                        mergedUsers.push(cloudUser);
-                    }
-                });
-                usersData = mergedUsers;
-                localStorage.setItem('he_users_local', JSON.stringify(usersData));
-            }
-
-            renderData(); // Gambar ulang baris tabel harian
-            updateSyncStatusUI(true);
-            resetForm();  // Kosongkan form isian
-            
-            if (!isSilent) {
-                if (submittedJob) {
-                    showSuccessSyncModal(actionType, submittedJob);
-                } else {
-                    showAlert('Google Sheets & Google Drive Sync Successful!', 'success');
-                }
-            }
-        } else {
-            if (!isSilent) showAlert('Gagal sinkron: ' + res.message, 'error');
-        }
-    } catch (err) {
-        console.error("Sync failed:", err);
-        if (!isSilent) {
-            showAlert('Gagal Menyambungkan ke Google Sheets!', 'error');
-            const debugBox = document.getElementById('alert-debug');
-            if (debugBox) {
-                debugBox.innerText = `Detail: ${err.message}. Pastikan Apps Script Web App URL berakhiran "/exec" dan di-deploy sebagai "Anyone".`;
-                debugBox.classList.remove('hidden');
-            }
-        } else {
-            updateSyncStatusUI(false);
-        }
-    } finally {
-        // Kembalikan tombol submit ke kondisi awal
-        if (btnSubmit && originalBtnHtml) {
-            btnSubmit.disabled = false;
-            btnSubmit.innerHTML = originalBtnHtml;
-        }
-        if (btnModalSubmit && originalBtnModalHtml) {
-            btnModalSubmit.disabled = false;
-            btnModalSubmit.innerHTML = originalBtnModalHtml;
-        }
-    }
-}
-
-/**
- * Menarik otomatis database terbaru dari awan sesaat setelah login sukses secara senyap
- */
-async function pullDataFromSheetsSilently() {
-    if (typeof googleSheetsURL === 'undefined' || !googleSheetsURL) {
-        googleSheetsURL = localStorage.getItem('he_sheets_url') || '';
-    }
-    if (!googleSheetsURL) return;
-    try {
-        const response = await fetch(googleSheetsURL + "?action=read");
-        if (!response.ok) throw new Error("Gagal menarik database cloud");
-        
-        const res = await response.json();
-        if (res.status === 'success' && res.logbook) {
-            const incomingLogbook = res.logbook.map(item => {
-                if (typeof item.photos === 'string') {
-                    try { item.photos = JSON.parse(item.photos); } catch(e) { item.photos = []; }
-                }
-                if (!Array.isArray(item.photos)) item.photos = [];
-                return item;
-            });
-
-            let mergedLogbook = [...logbookData];
-            incomingLogbook.forEach(cloudItem => {
-                const index = mergedLogbook.findIndex(localItem => localItem.id.toString() === cloudItem.id.toString());
-                if (index !== -1) mergedLogbook[index] = cloudItem;
-                else mergedLogbook.push(cloudItem);
-            });
-            mergedLogbook.sort((a, b) => b.id - a.id);
-            logbookData = mergedLogbook;
-            localStorage.setItem('he_logbook_local', JSON.stringify(logbookData)); 
-        }
-        
-        if (res.users && Array.isArray(res.users) && res.users.length > 0) { 
-            const incomingUsers = res.users;
-            let mergedUsers = [...usersData];
-            incomingUsers.forEach(cloudUser => {
-                const index = mergedUsers.findIndex(localUser => localUser.username === cloudUser.username);
-                if (index !== -1) mergedUsers[index] = cloudUser;
-                else mergedUsers.push(cloudUser);
-            });
-            usersData = mergedUsers; 
-            localStorage.setItem('he_users_local', JSON.stringify(usersData)); 
-        }
-        renderData();
-        populateFormDropdowns();
-        updateSyncStatusUI(true);
-    } catch(e) {
-        console.log("Offline backup mode aktif:", e.message);
-    }
-}
-
-// ==========================================
-// BAGIAN 2: FITUR PEMBANTU NOTIFIKASI SYNC MODAL
-// ==========================================
-
-/**
- * Memunculkan modal popup sukses mengirimkan data/sinkronisasi cloud
- * @param {string} type - Jenis aksi ('add', 'edit', atau 'delete')
- * @param {object} job - Pekerjaan yang bersangkutan
- */
-function showSuccessSyncModal(type, job) {
-    const modal = document.getElementById('success-sync-modal');
-    const iconContainer = document.getElementById('sync-pop-icon-container');
-    const title = document.getElementById('sync-pop-title');
-    const desc = document.getElementById('sync-pop-desc');
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "ID Laporan,Tanggal,Shift,Teknisi,Kategori,Area,Detail Pekerjaan,Jam Mulai,Jam Selesai,Status,Catatan Admin,Bidang Spesialis,Jenis Pemeliharaan\n";
     
-    if (!modal || !job) return;
+    logbookData.forEach(item => {
+        if (!item) return;
+        let row = [
+            item.id || '',
+            item.tanggal || '',
+            item.shift || '',
+            (item.teknisi || '').replace(/,/g, ';'),
+            item.category || '',
+            (item.area || '').replace(/,/g, ';'),
+            (item.detail || '').replace(/,/g, ';').replace(/\n/g, ' '),
+            item.time_start || '',
+            item.time_finish || '',
+            item.status || '',
+            (item.admin_notes || '').replace(/,/g, ';').replace(/\n/g, ' '),
+            item.specialty || '',
+            item.maintenance_type || ''
+        ].map(val => `"${val}"`).join(",");
+        csvContent += row + "\n";
+    });
 
-    // Bersihkan classes lama
-    iconContainer.className = "mx-auto w-16 h-16 rounded-full flex items-center justify-center shadow-inner";
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "Logbook_Engineering_" + new Date().toISOString().split('T')[0] + ".csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showAlert('Logbook berhasil diekspor ke file CSV!', 'success');
+}
 
-    if (type === 'delete') {
-        iconContainer.classList.add('bg-rose-50', 'text-rose-600', 'border', 'border-rose-100');
-        iconContainer.innerHTML = '<i data-lucide="trash-2" class="w-8 h-8"></i>';
-        title.innerText = "Data Pekerjaan Terhapus Cloud!";
-        desc.innerText = "Laporan pekerjaan serta berkas dokumentasi foto di Google Drive telah terhapus permanen.";
-    } else if (type === 'edit') {
-        iconContainer.classList.add('bg-amber-50', 'text-amber-600', 'border', 'border-amber-100');
-        iconContainer.innerHTML = '<i data-lucide="edit-3" class="w-8 h-8"></i>';
-        title.innerText = "Pembaruan Terkirim ke Cloud!";
-        desc.innerText = "Data pekerjaan Anda telah berhasil diperbarui di Google Spreadsheet.";
-    } else {
-        iconContainer.classList.add('bg-emerald-50', 'text-emerald-600', 'border', 'border-emerald-100');
-        iconContainer.innerHTML = '<i data-lucide="check-circle" class="w-8 h-8"></i>';
-        title.innerText = "Laporan Masuk Cloud Sheets!";
-        desc.innerText = "Data dan lampiran foto berhasil diunggah secara real-time.";
-    }
 
-    // Isian Ringkasan Data
-    document.getElementById('sync-pop-id').innerText = job.id;
-    document.getElementById('sync-pop-datetime').innerText = `${formatOnlyDate(job.tanggal)} (${job.shift || 'N/A'})`;
-    document.getElementById('sync-pop-teknisi').innerText = job.teknisi || '-';
-    document.getElementById('sync-pop-location').innerText = `[${job.category}] ${job.area}`;
-    document.getElementById('sync-pop-detail').innerText = job.detail || '-';
+// ==========================================
+// BAGIAN 3: MANAJEMEN TAB & DIALOG MODAL
+// ==========================================
 
-    let photosArr = [];
-    if (job.photos) {
-        if (Array.isArray(job.photos)) photosArr = job.photos;
-        else {
-            try { photosArr = JSON.parse(job.photos); } catch(e) { photosArr = []; }
+/**
+ * Berpindah tab tampilan di dashboard admin
+ * @param {string} name - Nama tab target ('logbook' atau 'users')
+ */
+function switchTab(name) {
+    const btnLogbook = document.getElementById('btn-tab-logbook');
+    const btnUsers = document.getElementById('btn-tab-users');
+    const contentLogbook = document.getElementById('tab-content-logbook');
+    const contentUsers = document.getElementById('tab-content-users');
+
+    if (name === 'logbook') {
+        if (btnLogbook) btnLogbook.className = "flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 bg-indigo-50 text-indigo-700 shadow-sm border border-indigo-100";
+        if (btnUsers) btnUsers.className = "flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 text-slate-500 hover:bg-slate-50";
+        if (contentLogbook) contentLogbook.className = "space-y-6";
+        if (contentUsers) contentUsers.className = "hidden";
+        
+        const syncBadge = document.getElementById('stat-sync');
+        const isS = syncBadge ? (syncBadge.innerText === "Cloud") : false;
+        const syncBanner = document.getElementById('sync-banner');
+        if (syncBanner) {
+            if (isS) {
+                syncBanner.classList.add('hidden');
+            } else {
+                syncBanner.classList.remove('hidden');
+            }
         }
+    } else {
+        if (btnUsers) btnUsers.className = "flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 bg-indigo-50 text-indigo-700 shadow-sm border border-indigo-100";
+        if (btnLogbook) btnLogbook.className = "flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 text-slate-500 hover:bg-slate-50";
+        if (contentLogbook) contentLogbook.className = "hidden";
+        if (contentUsers) contentUsers.className = "space-y-6";
+        
+        const syncBanner = document.getElementById('sync-banner');
+        if (syncBanner) syncBanner.classList.add('hidden'); 
+        
+        renderUsersList();
+        renderDropdownManagementLists(); 
     }
-    document.getElementById('sync-pop-photos-count').innerText = `${photosArr.length} Foto`;
+}
 
-    modal.classList.remove('hidden');
+
+// ==========================================
+// BAGIAN 4: EVENT PENGIKAT UTAMA (INITIALIZATION)
+// ==========================================
+
+/**
+ * Fungsi inisialisasi utama saat halaman pertama kali dimuat oleh browser
+ */
+window.onload = function() {
     lucide.createIcons();
-}
+    setTodayDate();
 
-function closeSuccessSyncModal() {
-    const modal = document.getElementById('success-sync-modal');
-    if (modal) modal.classList.add('hidden');
-}
+    // Deteksi parameter Apps Script URL otomatis jika dikirim via Link WhatsApp API
+    const urlParams = new URLSearchParams(window.location.search);
+    const apiParam = urlParams.get('api');
+    const viewParam = urlParams.get('view');
+    
+    if (apiParam && apiParam.startsWith('https://script.google.com/')) {
+        // Mengamankan rujukan penulisan variabel ke window scope global
+        window.googleSheetsURL = apiParam.trim();
+        localStorage.setItem('he_sheets_url', apiParam.trim());
+        window.history.replaceState({}, document.title, window.location.pathname);
+        showAlert('Cloud database terhubung otomatis!', 'success');
+    }
+
+    if (viewParam) {
+        sessionStorage.setItem('pending_view_id', viewParam);
+    }
+
+    const currentSavedURL = localStorage.getItem('he_sheets_url') || '';
+
+    // Periksa and muat konfigurasi API Spreadsheet
+    if (currentSavedURL) {
+        window.googleSheetsURL = currentSavedURL;
+        const sheetApiUrlInput = document.getElementById('sheet-api-url');
+        if (sheetApiUrlInput) sheetApiUrlInput.value = currentSavedURL;
+        updateSyncStatusUI(true);
+        pullDataFromSheetsSilently(); // Ambil database awan terbaru secara senyap
+    } else {
+        updateSyncStatusUI(false);
+    }
+
+    // Otentikasi otomatis jika sesi masuk akun sebelumnya masih terekam di browser
+    const savedSession = JSON.parse(localStorage.getItem('he_session'));
+    if (savedSession) {
+        applyUserSession(savedSession.role, savedSession.name);
+    } else {
+        showSection('login');
+    }
+
+    renderData();
+};
