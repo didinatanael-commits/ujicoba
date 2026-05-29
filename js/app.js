@@ -8,6 +8,40 @@
  */
 
 // ==========================================
+// BAGIAN KEAMANAN: DEFINISI HOISTED-SAFE UNTUK FUNGSI VISUAL INDIKATOR
+// ==========================================
+
+/**
+ * Fungsi memperbarui visual indikator Cloud vs Local secara aman (hoisted-safe)
+ * @param {boolean} isS - Menyatakan apakah mode cloud aktif (true) atau lokal (false)
+ */
+function updateSyncStatusUI(isS) {
+    const statusText = document.getElementById('stat-sync');
+    if (statusText) {
+        statusText.innerText = isS ? "Cloud" : "Local";
+        statusText.className = isS 
+            ? "text-2xs font-extrabold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100" 
+            : "text-2xs font-extrabold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full border border-slate-200";
+    }
+    const bannerStatus = document.getElementById('banner-status-text');
+    if (bannerStatus) {
+        bannerStatus.innerText = isS 
+            ? "Aplikasi Anda berhasil tersinkronisasi ke Google Spreadsheet." 
+            : "Aplikasi berjalan mode Offline (Local). Masukkan URL Apps Script untuk sinkronisasi.";
+    }
+    const syncBanner = document.getElementById('sync-banner');
+    if (syncBanner) {
+        if (isS) {
+            syncBanner.classList.add('hidden');
+        } else if (currentUserName === null) {
+            syncBanner.classList.remove('hidden');
+        } else {
+            syncBanner.classList.add('hidden');
+        }
+    }
+}
+
+// ==========================================
 // BAGIAN 1: MANAJEMEN DROPDOWN & INPUT KATEGORI
 // ==========================================
 
