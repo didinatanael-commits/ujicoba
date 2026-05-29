@@ -854,5 +854,69 @@
     <script src="js/auth.js"></script>
     <script src="js/app.js"></script>
 
+<!-- ========================================== -->
+    <!-- SCRIPT CADANGAN MANDIRI UNTUK SET URL       -->
+    <!-- Menjamin tombol Set URL selalu aktif luring -->
+    <!-- ========================================== -->
+    <script>
+        function toggleSetupModal(show) {
+            const modal = document.getElementById('setup-modal');
+            if (modal) {
+                if (show) {
+                    modal.classList.remove('hidden');
+                    const input = document.getElementById('sheet-api-url');
+                    if (input) input.value = localStorage.getItem('he_sheets_url') || '';
+                } else {
+                    modal.classList.add('hidden');
+                }
+            }
+        }
+
+        async function saveSetupConfig() {
+            const input = document.getElementById('sheet-api-url');
+            if (!input) return;
+            const rawURL = input.value.trim();
+            if (rawURL && !rawURL.startsWith('https://script.google.com/')) {
+                if (typeof showAlert === 'function') {
+                    showAlert('Format URL tidak valid! Harus berakhiran /exec', 'error');
+                } else {
+                    const alertMsg = document.getElementById('alert-message');
+                    if (alertMsg) alertMsg.innerText = 'Format URL tidak valid!';
+                    document.getElementById('alert-box')?.classList.remove('hidden');
+                }
+                return;
+            }
+            localStorage.setItem('he_sheets_url', rawURL);
+            
+            // Set variabel global jika file config.js berhasil dimuat
+            if (typeof googleSheetsURL !== 'undefined') {
+                googleSheetsURL = rawURL;
+            }
+            
+            toggleSetupModal(false);
+            
+            // Perbarui UI jika fungsi updateSyncStatusUI di js/app.js berhasil dimuat
+            if (typeof updateSyncStatusUI === 'function') {
+                updateSyncStatusUI(!!rawURL);
+            } else {
+                const bannerText = document.getElementById('banner-status-text');
+                if (bannerText) {
+                    bannerText.innerText = rawURL 
+                        ? "Aplikasi Anda berhasil tersinkronisasi ke Google Spreadsheet." 
+                        : "Aplikasi berjalan mode Offline (Local). Masukkan URL Apps Script untuk sinkronisasi.";
+                }
+                const syncBadge = document.getElementById('stat-sync');
+                if (syncBadge) {
+                    syncBadge.innerText = rawURL ? "Cloud" : "Local";
+                }
+            }
+            
+            // Picu sinkronisasi otomatis jika fungsi syncDataWithSheets di js/db.js berhasil dimuat
+            if (typeof syncDataWithSheets === 'function' && rawURL) {
+                await syncDataWithSheets();
+            }
+        }
+    </script>
+
 </body>
 </html>
